@@ -590,7 +590,7 @@ class ToolApprovalStore:
         scope = scope_for_decision(normalized_decision)
         if scope is None:
             return None
-        if not allow_continuation:
+        if not allow_continuation or os.getenv("ODYSSEUS_STRICT_TOOL_APPROVALS", "0").strip().lower() in {"1", "true", "yes", "on"}:
             return ExactToolApproval(
                 pending,
                 scope=ToolApprovalScope.SINGLE_ACTION,

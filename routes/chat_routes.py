@@ -1331,11 +1331,12 @@ def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any) -> bool:
             if str(ask_user.get("approval_id") or "") != approval_key:
                 continue
             ask_user["resolved"] = normalized_decision
-            stamp_chat_session_grant(
-                ask_user,
-                getattr(sess, "id", ""),
-                normalized_decision,
-            )
+            if os.getenv("ODYSSEUS_STRICT_TOOL_APPROVALS", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+                stamp_chat_session_grant(
+                    ask_user,
+                    getattr(sess, "id", ""),
+                    normalized_decision,
+                )
             message_id = metadata.get("_db_id")
             resolved_metadata = {
                 key: value for key, value in metadata.items() if key != "_db_id"
