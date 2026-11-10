@@ -174,3 +174,72 @@ def test_strict_mode_does_not_issue_persistent_chat_grant(monkeypatch):
 
     assert card["resolved"] == "approve"
     assert CHAT_SESSION_APPROVAL_SIGNATURE_FIELD not in card
+
+
+def test_strict_mode_displays_single_action_approval(monkeypatch):
+    monkeypatch.setenv("ODYSSEUS_STRICT_TOOL_APPROVALS", "1")
+
+    store = ToolApprovalStore()
+    pending = store.create(
+        owner="alice",
+        session_id="session-1",
+        origin_run_id="run-1",
+        tool_name="bash",
+        content="printf exact",
+        workspace=None,
+        external_untrusted_context_seen=False,
+        capabilities=capabilities_for_action("bash", "printf exact"),
+    )
+
+    payload = pending.public_payload()
+    options = payload["options"]
+
+    assert [option["label"] for option in options] == [
+        "Allow this action once",
+        "Deny",
+    ]
+    assert [option["value"] for option in options] == [
+        "approve",
+        "deny",
+    ]
+
+    grant = store.consume(
+        pending.approval_id,
+        decision=options[0]["value"],
+        owner="alice",
+        session_id="session-1",
+    )
+
+    assert grant is not None
+    assert grant.scope is ToolApprovalScope.SINGLE_ACTION
+    assert grant.allow_remaining_actions is False
+    assert grant.grants_chat_session is False
+
+
+def test_legacy_mode_preserves_existing_approval_options(monkeypatch):
+    monkeypatch.setenv("ODYSSEUS_STRICT_TOOL_APPROVALS", "0")
+
+    store = ToolApprovalStore()
+    pending = store.create(
+        owner="alice",
+        session_id="session-1",
+        origin_run_id="run-1",
+        tool_name="bash",
+        content="printf exact",
+        workspace=None,
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("bash", "printf exact"),
+    )
+
+    options = pending.public_payload()["options"]
+
+    assert [option["label"] for option in options] == [
+        "Allow for this task",
+        "Allow for this chat session",
+        "Deny",
+    ]
+    assert [option["value"] for option in options] == [
+        "approve_task",
+        "approve",
+        "deny",
+    ]

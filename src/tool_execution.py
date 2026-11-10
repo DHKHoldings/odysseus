@@ -1802,10 +1802,19 @@ async def execute_tool_block(
 
     approval_claimed = False
     if exact_approval is not None:
+        strict_mode = os.getenv(
+            "ODYSSEUS_STRICT_TOOL_APPROVALS", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+
         if (
             not isinstance(security_context, ToolRunSecurityContext)
-            or not security_context.external_untrusted_context_seen
-            or not exact_approval.pending.external_untrusted_context_seen
+            or (
+                not strict_mode
+                and (
+                    not security_context.external_untrusted_context_seen
+                    or not exact_approval.pending.external_untrusted_context_seen
+                )
+            )
         ):
             return (
                 f"{getattr(block, 'tool_type', None)}: BLOCKED",

@@ -25436,7 +25436,7 @@ async def stream_agent_loop(
         if tool_result_is_successful(approved_result):
             for doc_event in _document_stream_events(approved_block):
                 yield f"data: {json.dumps(doc_event)}\n\n"
-        if approved_result.get("action") == "suggest":
+        if tool_result_is_successful(approved_result) and approved_result.get("action") == "suggest":
             yield (
                 "data: "
                 + json.dumps(
@@ -25448,7 +25448,11 @@ async def stream_agent_loop(
                 )
                 + "\n\n"
             )
-        elif approved_result.get("doc_id") and approved_result.get("content") is not None:
+        elif (
+            tool_result_is_successful(approved_result)
+            and approved_result.get("doc_id")
+            and approved_result.get("content") is not None
+        ):
             yield (
                 "data: "
                 + json.dumps(
@@ -25520,7 +25524,13 @@ async def stream_agent_loop(
             "ui_event",
             "diff",
         ):
-            if key in approved_result:
+            if (
+                key in approved_result
+                and (
+                    key not in {"doc_id", "title", "language", "content", "version", "action", "diff"}
+                    or tool_result_is_successful(approved_result)
+                )
+            ):
                 approved_event[key] = approved_result[key]
         if approved_result.get("images"):
             approved_image = approved_result["images"][0]
@@ -25637,7 +25647,10 @@ async def stream_agent_loop(
         ):
             if approved_result.get(key):
                 approved_tool_event[key] = approved_result[key]
-        if approved_result.get("doc_id"):
+        if (
+            tool_result_is_successful(approved_result)
+            and approved_result.get("doc_id")
+        ):
             approved_tool_event["doc_id"] = approved_result["doc_id"]
             approved_tool_event["doc_title"] = approved_result.get("title", "")
         tool_events.append(approved_tool_event)
@@ -33934,7 +33947,7 @@ async def stream_agent_loop(
 
             # Emit doc-specific event for document tools — the frontend
             # document panel handles this; no need to show content in chat.
-            if is_doc_tool and "action" in result:
+            if is_doc_tool and tool_result_is_successful(result) and "action" in result:
                 if result["action"] == "suggest":
                     yield (
                         f'data: {json.dumps({"type": "doc_suggestions", "doc_id": result["doc_id"], "suggestions": result["suggestions"]})}\n\n'
@@ -33984,7 +33997,7 @@ async def stream_agent_loop(
             # Build output for frontend tool bubble.
             # Document tools get a short summary — content goes to the editor panel.
             output_text = ""
-            if is_doc_tool and "action" in result:
+            if is_doc_tool and tool_result_is_successful(result) and "action" in result:
                 action = result["action"]
                 title = result.get("title", "")
                 ver = result.get("version", "?")
@@ -34073,7 +34086,7 @@ async def stream_agent_loop(
                     tool_output_data["tool_args"] = _email_tool_args
             if tool_call_id:
                 tool_output_data.update({"call_id": tool_call_id, "tool_call_id": tool_call_id})
-            if is_doc_tool and "action" in result:
+            if is_doc_tool and tool_result_is_successful(result) and "action" in result:
                 tool_output_data.update({
                     "doc_id": result.get("doc_id"),
                     "document_action": result.get("action"),

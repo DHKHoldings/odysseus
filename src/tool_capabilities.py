@@ -827,6 +827,27 @@ class ToolRunSecurityContext:
                     "It requires an interactive session."
                 ),
             )
+        strict_mode = os.getenv(
+            "ODYSSEUS_STRICT_TOOL_APPROVALS", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+
+        if strict_mode:
+            capabilities = capabilities_for_action(tool_name, content)
+            if not capabilities.known:
+                return ToolGateDecision(
+                    False,
+                    "strict approval policy blocks unknown tool",
+                )
+            blocked_effects = capabilities.effects & POST_EXTERNAL_BLOCKED_EFFECTS
+            if blocked_effects:
+                effects = ", ".join(
+                    sorted(effect.value for effect in blocked_effects)
+                )
+                return ToolGateDecision(
+                    False,
+                    f"strict approval required for {effects}",
+                )
+
         if not TOOL_APPROVAL_GATE_ENABLED:
             return ToolGateDecision(True)
         if self.approval_gate_bypassed:

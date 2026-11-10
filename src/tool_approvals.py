@@ -194,19 +194,28 @@ class PendingToolApproval:
     browser_operation: BoundBrowserOperation | None = None
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
-        return {
-            "kind": "tool_approval",
-            "approval_id": self.approval_id,
-            # The browser already owns this chat id. Persisting it with the
-            # resolved card lets history-derived session grants remain bound to
-            # this exact chat and prevents inheritance by a forked session.
-            "session_id": self.session_id,
-            "question": "Allow this task to continue?",
-            "description": reason or (
-                "Untrusted context influenced this run, so continuing with "
-                "otherwise-gated actions needs your explicit approval."
-            ),
-            "options": [
+        strict_mode = os.getenv(
+            "ODYSSEUS_STRICT_TOOL_APPROVALS", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+
+        if strict_mode:
+            options = [
+                {
+                    "label": "Allow this action once",
+                    "value": CHAT_SESSION_APPROVAL_DECISION,
+                    "description": (
+                        "Execute only the exact action shown below. "
+                        "Any subsequent sensitive action requires separate approval."
+                    ),
+                },
+                {
+                    "label": "Deny",
+                    "value": DENY_APPROVAL_DECISION,
+                    "description": "Do not execute the proposed action.",
+                },
+            ]
+        else:
+            options = [
                 {
                     "label": "Allow for this task",
                     "value": TASK_APPROVAL_DECISION,
@@ -230,7 +239,21 @@ class PendingToolApproval:
                     "value": DENY_APPROVAL_DECISION,
                     "description": "Do not execute the proposed action.",
                 },
-            ],
+            ]
+
+        return {
+            "kind": "tool_approval",
+            "approval_id": self.approval_id,
+            # The browser already owns this chat id. Persisting it with the
+            # resolved card lets history-derived session grants remain bound to
+            # this exact chat and prevents inheritance by a forked session.
+            "session_id": self.session_id,
+            "question": "Allow this task to continue?",
+            "description": reason or (
+                "Untrusted context influenced this run, so continuing with "
+                "otherwise-gated actions needs your explicit approval."
+            ),
+            "options": options,
             "action": {
                 "tool": self.tool_name,
                 # Show the complete sealed input so approval never hides

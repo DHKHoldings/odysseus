@@ -198,7 +198,13 @@ class Session:
                 resumed["reasoning_content"] = thinking
                 messages[index] = resumed
             break
-        if not _history_grants_chat_session_approval(self.history, self.id):
+        import os
+        strict_approvals = os.getenv(
+            "ODYSSEUS_STRICT_TOOL_APPROVALS", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if strict_approvals or not _history_grants_chat_session_approval(
+            self.history, self.id
+        ):
             return messages
 
         # Keep the grant close to the latest user request so route-neutral
