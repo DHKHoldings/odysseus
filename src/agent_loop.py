@@ -33366,6 +33366,24 @@ async def stream_agent_loop(
                     "Tool blocked before approval by current policy: %s",
                     block.tool_type,
                 )
+            elif (
+                block.tool_type in {"edit_document", "suggest_document", "update_document"}
+                and (
+                    active_document is None
+                    or getattr(active_document, "id", None) is None
+                    or getattr(active_document, "version_count", None) is None
+                )
+            ):
+                desc = f"{block.tool_type}: BLOCKED"
+                result = {
+                    "error": (
+                        "Open the exact document to edit, then request this "
+                        "action again so its id and version can be sealed."
+                    ),
+                    "exit_code": 1,
+                    "blocked": True,
+                    "policy": "exact_tool_approval_target",
+                }
             elif not security_decision.allowed:
                 approval_document = (
                     active_document

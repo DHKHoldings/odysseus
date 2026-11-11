@@ -492,6 +492,13 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "tools that execute code, mutate state or cause external side effects need "
         "a separate approval. Set to 0 to opt out.",
     ),
+    "ODYSSEUS_STRICT_TOOL_APPROVALS": (
+        "Agent loop and tool execution", USER,
+        "Security-relevant. When enabled, requires a fresh, single-action "
+        "approval for sensitive tool operations, even without external "
+        "untrusted content. Enabled by default in the supplied Docker "
+        "Compose configurations.",
+    ),
     "ODYSSEUS_MCP_ALLOWED_COMMANDS": (
         "Agent loop and tool execution", USER,
         "Security-relevant. Comma-separated allowlist of MCP launcher basenames the "
