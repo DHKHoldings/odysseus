@@ -1,4 +1,6 @@
-﻿"""Regression tests for opt-in strict tool approvals."""
+"""Regression tests for opt-in strict tool approvals."""
+
+import pytest
 
 from src.tool_approval_scopes import ToolApprovalScope
 from src.tool_approvals import ToolApprovalStore
@@ -243,3 +245,45 @@ def test_legacy_mode_preserves_existing_approval_options(monkeypatch):
         "approve",
         "deny",
     ]
+
+@pytest.mark.asyncio
+async def test_strict_mode_rejects_exempt_security_context_for_sensitive_tool(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from src.agent_runtime.authority import OperationGrant, RequestAuthority
+    from src.tool_execution import (
+        NO_TOOL_SECURITY_CONTEXT,
+        execute_tool_block,
+    )
+    from src.tool_types import ToolBlock
+    import src.tool_execution as execution
+
+    monkeypatch.setenv("ODYSSEUS_STRICT_TOOL_APPROVALS", "1")
+
+    implementation = AsyncMock(
+        return_value=("bash", {"exit_code": 0, "output": "executed"})
+    )
+    monkeypatch.setattr(
+        execution,
+        "_execute_tool_block_impl",
+        implementation,
+    )
+
+    authority = RequestAuthority(
+        "strict-exemption-test",
+        "alice",
+        "session-1",
+        "",
+        (OperationGrant("bash"),),
+    )
+
+    description, result = await execute_tool_block(
+        ToolBlock("bash", "printf should-not-run"),
+        owner="alice",
+        session_id="session-1",
+        security_context=NO_TOOL_SECURITY_CONTEXT,
+        request_authority=authority,
+    )
+
+    assert result.get("blocked") is True
+    implementation.assert_not_awaited()
