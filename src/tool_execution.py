@@ -1705,6 +1705,18 @@ async def execute_tool_block(
             "NO_TOOL_SECURITY_CONTEXT"
         )
 
+    # Strict mode requires run provenance for every tool execution.
+    # The non-agent exemption must not bypass approval enforcement.
+    if (
+        security_context is NO_TOOL_SECURITY_CONTEXT
+        and os.getenv("ODYSSEUS_STRICT_TOOL_APPROVALS", "0").strip().lower()
+        in {"1", "true", "yes", "on"}
+    ):
+        return blocked_tool_result(
+            getattr(block, "tool_type", None),
+            "Strict tool approvals require a ToolRunSecurityContext.",
+        )
+
     # Credential denial precedes authority, exact approval claim and bridges.
     if (isinstance(security_context, ToolRunSecurityContext)
             and security_context.delegated_credential):
@@ -1849,10 +1861,19 @@ async def execute_tool_block(
 
     approval_claimed = False
     if exact_approval is not None:
+        strict_mode = os.getenv(
+            "ODYSSEUS_STRICT_TOOL_APPROVALS", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+
         if (
             not isinstance(security_context, ToolRunSecurityContext)
-            or not security_context.external_untrusted_context_seen
-            or not exact_approval.pending.external_untrusted_context_seen
+            or (
+                not strict_mode
+                and (
+                    not security_context.external_untrusted_context_seen
+                    or not exact_approval.pending.external_untrusted_context_seen
+                )
+            )
         ):
             return (
                 f"{getattr(block, 'tool_type', None)}: BLOCKED",

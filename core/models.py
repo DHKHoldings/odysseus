@@ -5,6 +5,7 @@ Pure data models — no database logic, no side effects.
 These are simple datacontainers. All persistence is handled by SessionManager.
 """
 
+import os
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
@@ -43,6 +44,9 @@ def _history_grants_chat_session_approval(
     session_id: str,
 ) -> bool:
     """Return whether this exact chat has a resolved session-scope grant."""
+
+    if os.getenv("ODYSSEUS_STRICT_TOOL_APPROVALS", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        return False
 
     expected_session = str(session_id or "")
     if not expected_session:
@@ -194,7 +198,13 @@ class Session:
                 resumed["reasoning_content"] = thinking
                 messages[index] = resumed
             break
-        if not _history_grants_chat_session_approval(self.history, self.id):
+        import os
+        strict_approvals = os.getenv(
+            "ODYSSEUS_STRICT_TOOL_APPROVALS", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if strict_approvals or not _history_grants_chat_session_approval(
+            self.history, self.id
+        ):
             return messages
 
         # Keep the grant close to the latest user request so route-neutral

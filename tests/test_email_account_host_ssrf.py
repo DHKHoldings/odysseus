@@ -511,5 +511,3 @@ async def test_save_host_resolution_runs_off_the_event_loop(monkeypatch, route_n
     else:
         result = await _route(router, "/api/email/config", "PUT")(payload, account_id=None, owner="admin")
     assert result == {"ok": False, "error": "Host rejected"}
-
-

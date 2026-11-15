@@ -1529,7 +1529,7 @@ def test_document_stream_events_are_derived_from_authorized_block():
     ]
 
 
-def test_authorized_document_stream_precedes_completed_update(monkeypatch):
+def test_unidentified_document_update_cannot_stream_or_execute(monkeypatch):
     import src.agent_loop as agent_loop
 
     monkeypatch.setattr(
@@ -1575,6 +1575,200 @@ def test_authorized_document_stream_precedes_completed_update(monkeypatch):
     )
     event_types = [event.get("type") for event in events]
 
-    assert event_types.index("doc_stream_open") < event_types.index("doc_update")
-    assert event_types.index("doc_stream_delta") < event_types.index("doc_update")
-    assert event_types.index("doc_update") < event_types.index("tool_output")
+
+    assert "doc_stream_open" not in event_types
+    assert "doc_stream_delta" not in event_types
+    assert "doc_update" not in event_types
+
+    blocked_outputs = [
+        event for event in events
+        if event.get("type") == "tool_output"
+        and event.get("tool") == "update_document"
+        and event.get("blocked") is True
+    ]
+    assert len(blocked_outputs) == 1
+    assert "id and version can be sealed" in blocked_outputs[0]["output"]
+
+
+@pytest.mark.parametrize("result,expected_success", [
+    (
+        {
+            "action": "update",
+            "doc_id": "document-7",
+            "title": "Existing",
+            "language": "markdown",
+            "content": "Replacement",
+            "version": 5,
+            "exit_code": 0,
+        },
+        True,
+    ),
+    (
+        {
+            "action": "update",
+            "doc_id": "document-7",
+            "title": "Existing",
+            "language": "markdown",
+            "content": "Replacement",
+            "version": 5,
+            "error": "Document changed after approval",
+            "exit_code": 1,
+        },
+        False,
+    ),
+])
+def test_approved_document_event_metadata_requires_success(
+    result, expected_success
+):
+    from src.tool_capabilities import tool_result_is_successful
+
+    approved_event = {
+        "type": "tool_output",
+        "tool": "update_document",
+        "approved": True,
+        "exit_code": result.get("exit_code"),
+    }
+
+    for key in (
+        "doc_id",
+        "title",
+        "language",
+        "content",
+        "version",
+        "action",
+        "diff",
+    ):
+        if key in result and tool_result_is_successful(result):
+            approved_event[key] = result[key]
+
+    assert tool_result_is_successful(result) is expected_success
+
+    document_fields = {
+        "doc_id", "title", "language",
+        "content", "version", "action", "diff",
+    }
+
+    if expected_success:
+        assert approved_event["doc_id"] == "document-7"
+        assert approved_event["content"] == "Replacement"
+    else:
+        assert not document_fields.intersection(approved_event)
+
+
+@pytest.mark.parametrize("succeeds", [True, False])
+def test_approved_document_continuation_emits_only_successful_updates(
+    monkeypatch, succeeds
+):
+    import src.agent_loop as agent_loop
+    from src.tool_approvals import ToolApprovalStore
+
+    executed = []
+    _patch_agent_loop(monkeypatch, [], executed)
+
+    store = ToolApprovalStore()
+    content = '{"content":"Replacement"}'
+
+    from src.agent_runtime.authority import RequestAuthority, OperationGrant
+
+    authority = RequestAuthority(
+        "document-continuation-test",
+        "alice",
+        "document-session",
+        "",
+        (OperationGrant("update_document"),),
+    )
+
+    pending = store.create(
+        owner="alice",
+        session_id="document-session",
+        origin_run_id="original-run",
+        tool_name="update_document",
+        content=content,
+        workspace=None,
+        external_untrusted_context_seen=True,
+        capabilities=capabilities_for_action("update_document", content),
+        request_authority=authority,
+    )
+
+    grant = store.consume(
+        pending.approval_id,
+        decision="approve",
+        owner="alice",
+        session_id="document-session",
+    )
+
+    assert grant is not None
+
+    result = {
+        "action": "update",
+        "doc_id": "document-7",
+        "title": "Draft",
+        "language": "markdown",
+        "content": "Replacement",
+        "version": 5,
+        "exit_code": 0 if succeeds else 1,
+    }
+    if not succeeds:
+        result["error"] = "Document changed after approval"
+
+    async def fake_execute(block, *args, **kwargs):
+        executed.append(block.tool_type)
+        return "update_document", dict(result)
+
+    monkeypatch.setattr(agent_loop, "execute_tool_block", fake_execute)
+
+    events = _collect_agent_events(
+        agent_loop.stream_agent_loop(
+            "http://local.test/v1",
+            "small-local-model",
+            [{"role": "user", "content": "Update the approved document."}],
+            owner="alice",
+            session_id="document-session",
+            max_rounds=0,
+            relevant_tools={"update_document"},
+            exact_approval=grant,
+            request_authority=authority,
+        )
+    )
+
+    assert executed == ["update_document"], events
+
+    outputs = [
+        event for event in events
+        if event.get("type") == "tool_output"
+        and event.get("tool") == "update_document"
+        and event.get("approved") is True
+    ]
+    assert len(outputs) == 1, events
+
+    document_events = [
+        event for event in events
+        if event.get("type") in {
+            "doc_update", "doc_suggestions",
+            "doc_stream_start", "doc_stream_delta", "doc_stream_end",
+        }
+    ]
+
+    finals = [
+        event.get("content")
+        for event in events
+        if event.get("type") == "final_response"
+    ]
+
+    if succeeds:
+        assert outputs[0]["doc_id"] == "document-7"
+        assert outputs[0]["content"] == "Replacement"
+        assert any(e.get("type") == "doc_update" for e in document_events)
+        assert "Done." in finals
+    else:
+        assert not document_events, events
+        for field in (
+            "doc_id", "title", "language",
+            "content", "version", "action", "diff",
+        ):
+            assert field not in outputs[0], outputs[0]
+        assert "Done." not in finals
+        assert any(
+            "Document changed after approval" in str(value)
+            for value in finals
+        ), events

@@ -128,4 +128,3 @@ def test_fork_before_a_message_id_ignores_a_stale_keep_count(monkeypatch):
 def test_fork_through_a_message_id_includes_it(monkeypatch):
     copied = _fork_with(monkeypatch, {"through_msg_id": "b", "keep_count": 0}, ["a", "b", "c", "d"])
     assert copied == ["m0", "m1"]
-

@@ -667,5 +667,3 @@ def test_non_admin_toggle_rejection_and_ui_behavior():
     assert data["adminToggleDisabled"] is False
     assert data["adminSavedToggle"] is False
     assert data["adminMsg"] == "Saved"
-
-
