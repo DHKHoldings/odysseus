@@ -183,3 +183,87 @@ def test_npx_cache_check_fallback_treats_timeout_as_cache_miss(monkeypatch, tmp_
             timeout_s=2,
         )
     ) is False
+
+def test_browser_mcp_direct_args_remove_npx_package(monkeypatch):
+    monkeypatch.setenv("ODYSSEUS_BROWSER_EXECUTABLE", "/usr/bin/chromium")
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+
+    args = builtin_mcp._browser_mcp_direct_args(
+        ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"]
+    )
+
+    assert "-y" not in args
+    assert "@playwright/mcp@latest" not in args
+    assert "--headless" in args
+    assert args[args.index("--caps") + 1] == "vision"
+    assert "--executable-path" in args
+    assert "/usr/bin/chromium" in args
+    assert "--isolated" in args
+    assert "--no-sandbox" in args
+
+def test_browser_mcp_direct_entrypoint_requires_existing_file(monkeypatch, tmp_path):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+
+    entrypoint = tmp_path / "cli.js"
+    monkeypatch.setenv("ODYSSEUS_BROWSER_MCP_ENTRYPOINT", str(entrypoint))
+
+    assert builtin_mcp._browser_mcp_direct_entrypoint() is None
+
+    entrypoint.write_text("// test fixture", encoding="utf-8")
+
+    assert builtin_mcp._browser_mcp_direct_entrypoint() == str(entrypoint)
+
+def test_browser_mcp_launch_selection_fails_closed_for_missing_entrypoint(monkeypatch, tmp_path):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+    missing = tmp_path / "missing-cli.js"
+    monkeypatch.setenv("ODYSSEUS_BROWSER_MCP_ENTRYPOINT", str(missing))
+
+    command, args = builtin_mcp._browser_mcp_launch_command(
+        "npx", ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"]
+    )
+
+    assert command is None
+    assert args == []
+
+def test_browser_mcp_launch_selection_uses_direct_node(monkeypatch, tmp_path):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+
+    entrypoint = tmp_path / "cli.js"
+    entrypoint.write_text("// test fixture", encoding="utf-8")
+
+    monkeypatch.setenv("ODYSSEUS_BROWSER_MCP_ENTRYPOINT", str(entrypoint))
+    monkeypatch.setenv("ODYSSEUS_BROWSER_EXECUTABLE", "/usr/bin/chromium")
+
+    command, args = builtin_mcp._browser_mcp_launch_command(
+        "npx", ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"]
+    )
+
+    assert command == "node"
+    assert args[0] == str(entrypoint)
+    assert "-y" not in args
+    assert "@playwright/mcp@latest" not in args
+    assert "--headless" in args
+    assert args[args.index("--caps") + 1] == "vision"
+    assert "--executable-path" in args
+    assert "/usr/bin/chromium" in args
+    assert "--isolated" in args
+    assert "--no-sandbox" in args
+
+def test_browser_mcp_environment_has_writable_home(monkeypatch, tmp_path):
+    import os
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+
+    cache_home = tmp_path / "playwright-mcp-cache"
+    monkeypatch.setenv("ODYSSEUS_BROWSER_MCP_CACHE", str(cache_home))
+
+    env = builtin_mcp._browser_mcp_environment(str(tmp_path))
+
+    assert env["HOME"] == str(cache_home / "home")
+    assert env["XDG_CONFIG_HOME"] == str(cache_home / "config")
+    assert env["XDG_CACHE_HOME"] == str(cache_home)
+    assert env["PLAYWRIGHT_BROWSERS_PATH"] == str(cache_home / "browsers")
+
+    for key in ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
+        path = env[key]
+        assert os.path.isdir(path)
+        assert os.access(path, os.W_OK)

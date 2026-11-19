@@ -145,6 +145,45 @@ def _browser_mcp_args(args: list[str]) -> list[str]:
     return out
 
 
+
+def _browser_mcp_direct_args(args: list[str]) -> list[str]:
+    """Build Playwright MCP arguments without the npx package invocation."""
+    args = list(args)
+    if len(args) < 2 or args[:2] != ["-y", "@playwright/mcp@latest"]:
+        raise ValueError("Unexpected Playwright MCP package invocation")
+    return _browser_mcp_args(args[2:])
+
+
+
+def _browser_mcp_direct_entrypoint() -> str | None:
+    """Return the configured local Playwright MCP entrypoint if it exists."""
+    configured = os.environ.get("ODYSSEUS_BROWSER_MCP_ENTRYPOINT", "").strip()
+    if not configured:
+        return None
+    entrypoint = os.path.abspath(configured)
+    return entrypoint if os.path.isfile(entrypoint) else None
+
+
+
+def _browser_mcp_launch_command(
+    npx_path: str, args: list[str]
+) -> tuple[str | None, list[str]]:
+    """Select direct browser MCP execution or the existing npx invocation."""
+    configured = os.environ.get("ODYSSEUS_BROWSER_MCP_ENTRYPOINT", "").strip()
+    if not configured:
+        return npx_path, _browser_mcp_args(args)
+
+    entrypoint = _browser_mcp_direct_entrypoint()
+    if entrypoint is None:
+        logger.warning(
+            "Configured Playwright MCP entrypoint is missing; "
+            "browser MCP startup disabled without npx fallback."
+        )
+        return None, []
+
+    return "node", [entrypoint, *_browser_mcp_direct_args(args)]
+
+
 def builtin_python_env(base_dir: str) -> dict[str, str]:
     """Environment for built-in Python MCP subprocesses.
 
@@ -158,6 +197,31 @@ def builtin_python_env(base_dir: str) -> dict[str, str]:
         if item and item not in parts:
             parts.append(item)
     return {"PYTHONPATH": os.pathsep.join(parts)}
+
+
+def _browser_mcp_environment(base_dir: str) -> dict[str, str]:
+    """Provide dedicated writable directories for browser MCP processes."""
+    cache_home = os.path.abspath(
+        os.environ.get("ODYSSEUS_BROWSER_MCP_CACHE")
+        or os.path.join(base_dir, "data", "local", "playwright-mcp-cache")
+    )
+
+    home = os.path.join(cache_home, "home")
+    config = os.path.join(cache_home, "config")
+
+    for directory in (cache_home, home, config):
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        if not os.path.isdir(directory) or not os.access(directory, os.W_OK):
+            raise PermissionError(
+                f"Browser MCP requires a writable directory: {directory}"
+            )
+
+    return {
+        "HOME": home,
+        "XDG_CONFIG_HOME": config,
+        "XDG_CACHE_HOME": cache_home,
+        "PLAYWRIGHT_BROWSERS_PATH": os.path.join(cache_home, "browsers"),
+    }
 
 
 async def register_builtin_servers(mcp_manager):
@@ -208,8 +272,14 @@ async def register_builtin_servers(mcp_manager):
             # lets `npx -y` install @playwright/mcp on first start. Locked-down
             # installs can opt back into the old no-network startup behavior
             # with ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE=1.
-            args = _browser_mcp_args(cfg["args"]) if server_id == "builtin_browser" else list(cfg["args"])
-            pkg_spec = _npx_package_from_args(args)
+            if server_id == "builtin_browser":
+                command, args = _browser_mcp_launch_command(npx_path, cfg["args"])
+                if command is None:
+                    continue
+            else:
+                command, args = npx_path, list(cfg["args"])
+
+            pkg_spec = _npx_package_from_args(args) if command == npx_path else None
             if BROWSER_MCP_REQUIRE_CACHE and pkg_spec and not await _is_npx_package_cached(npx_path, pkg_spec):
                 logger.warning(
                     f"{cfg['name']} is not available.\n"
@@ -222,24 +292,16 @@ async def register_builtin_servers(mcp_manager):
                 )
                 continue
 
-            logger.info(f"Starting NPX server: {cfg['name']} ({npx_path} {' '.join(args)})")
+            logger.info(f"Starting built-in MCP server: {cfg['name']} ({command} {' '.join(args)})")
             try:
                 env = None
                 if server_id == "builtin_browser":
-                    cache_home = os.environ.get(
-                        "ODYSSEUS_BROWSER_MCP_CACHE",
-                        os.path.join(base_dir, "data", "local", "playwright-mcp-cache"),
-                    )
-                    os.makedirs(cache_home, exist_ok=True)
-                    env = {
-                        "XDG_CACHE_HOME": cache_home,
-                        "PLAYWRIGHT_BROWSERS_PATH": os.path.join(cache_home, "browsers"),
-                    }
+                    env = _browser_mcp_environment(base_dir)
                 ok = await mcp_manager.connect_server(
                     server_id=server_id,
                     name=cfg["name"],
                     transport="stdio",
-                    command=npx_path,
+                    command=command,
                     args=args,
                     env=env,
                 )
