@@ -1278,11 +1278,28 @@ def _is_admin(request: Request) -> bool:
     try:
         from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN, INTERNAL_TOOL_USER
         import secrets
-        hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-        if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
-            return True
-        if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
-            return True
+        client = request.client
+        host = client.host if client else None
+        forwarded_headers = (
+            "cf-connecting-ip",
+            "cf-ray",
+            "cf-visitor",
+            "forwarded",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+            "x-real-ip",
+        )
+        trusted_loopback = (
+            host in ("127.0.0.1", "::1")
+            and not any(request.headers.get(name) for name in forwarded_headers)
+        )
+        if trusted_loopback:
+            hdr = request.headers.get(INTERNAL_TOOL_HEADER)
+            if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
+                return True
+            if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
+                return True
     except Exception:
         pass
 

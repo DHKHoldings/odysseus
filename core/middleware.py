@@ -64,11 +64,29 @@ def require_admin(request: Request):
     # (b) the auth middleware already validated the token and stamped
     #     request.state.current_user = "internal-tool".
     try:
-        hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-        if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
-            return
-        if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
-            return
+        client = request.client
+        host = client.host if client else None
+        forwarded_headers = (
+            "cf-connecting-ip",
+            "cf-ray",
+            "cf-visitor",
+            "forwarded",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+            "x-real-ip",
+        )
+        trusted_loopback = (
+            host in ("127.0.0.1", "::1")
+            and not any(request.headers.get(name) for name in forwarded_headers)
+        )
+
+        if trusted_loopback:
+            hdr = request.headers.get(INTERNAL_TOOL_HEADER)
+            if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
+                return
+            if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
+                return
     except Exception:
         pass
 
